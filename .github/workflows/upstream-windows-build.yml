@@ -1,3 +1,4 @@
+
 name: ABUKHALED AI - Upstream Windows Build Bridge
 
 on:
@@ -28,6 +29,7 @@ jobs:
   upstream-build:
     runs-on: windows-latest
     timeout-minutes: 150
+
     steps:
       - name: Check out ABUKHALED AI integration repository
         uses: actions/checkout@v5
@@ -60,21 +62,30 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $sha = (git -C upstream rev-parse HEAD).Trim()
-          if ($sha -notmatch '^[0-9a-f]{40}$') { throw 'Could not resolve an exact upstream commit SHA.' }
+
+          if ($sha -notmatch '^[0-9a-f]{40}$') {
+            throw 'Could not resolve an exact upstream commit SHA.'
+          }
+
           if ($env:REQUESTED_COMMIT -and $sha -ne $env:REQUESTED_COMMIT.ToLowerInvariant()) {
             throw 'Checked-out commit does not match the requested immutable SHA.'
           }
 
           $root = Get-Content upstream/package.json -Raw | ConvertFrom-Json
           $electron = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
+
           if ($root.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw "Unexpected OmniRoute root version: $($root.version). Expected $env:EXPECTED_UPSTREAM_VERSION."
           }
+
           if ($electron.version -ne $root.version) {
             throw "Version mismatch: root=$($root.version), electron=$($electron.version)."
           }
+
           foreach ($lock in @('upstream/package-lock.json', 'upstream/electron/package-lock.json')) {
-            if (-not (Test-Path $lock)) { throw "Required lockfile is missing: $lock" }
+            if (-not (Test-Path $lock)) {
+              throw "Required lockfile is missing: $lock"
+            }
           }
 
           @(
@@ -85,6 +96,7 @@ jobs:
             "Electron package version: $($electron.version)"
             "Build runner: $env:RUNNER_OS / $env:RUNNER_ARCH"
           ) | Set-Content upstream-revision.txt
+
           Get-Content upstream-revision.txt
           "UPSTREAM_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -108,7 +120,6 @@ jobs:
         working-directory: upstream
         shell: pwsh
         run: |
-          # npm 11 may block dependency install scripts unless explicitly allowlisted.
           npm config set allow-scripts=omniroute,keytar,onnxruntime-node,@parcel/watcher,@swc/core,protobufjs,esbuild
           npm config get allow-scripts
 
@@ -122,7 +133,7 @@ jobs:
         shell: pwsh
         run: npm ci --prefix electron --no-audit --no-fund
 
-            - name: Build upstream application
+      - name: Build upstream application
         working-directory: upstream
         shell: pwsh
         run: npm run build
@@ -142,24 +153,31 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $output = Join-Path (Resolve-Path upstream).Path 'electron\dist-electron'
+
           if (-not (Test-Path $output)) {
             throw "Expected Electron output directory was not created: $output"
           }
+
           $files = @(Get-ChildItem -Path $output -File -Filter '*.exe')
+
           if ($files.Count -eq 0) {
             Get-ChildItem -Path $output -Force | Select-Object Name, Length
             throw 'No Windows EXE files were produced in electron/dist-electron.'
           }
+
           $setup = @($files | Where-Object { $_.Name -match '(?i)setup.*\.exe$|\.setup\.' })
+
           if ($setup.Count -eq 0) {
             $files | Select-Object Name, Length
             throw 'EXE files exist, but no recognizable NSIS Setup installer was found.'
           }
 
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
           foreach ($file in $files) {
             Copy-Item -LiteralPath $file.FullName -Destination (Join-Path artifacts $file.Name) -Force
           }
+
           Copy-Item upstream-revision.txt artifacts/upstream-revision.txt -Force
           Get-ChildItem artifacts -File | Select-Object Name, Length
 
@@ -171,10 +189,13 @@ jobs:
       - name: Create SHA-256 checksums for build artifacts
         shell: pwsh
         run: |
-          $lines = Get-ChildItem artifacts -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object {
-            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)"
-          }
+          $lines = Get-ChildItem artifacts -File |
+            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+            ForEach-Object {
+              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+
           $lines | Set-Content artifacts/SHA256SUMS.txt
           Get-Content artifacts/SHA256SUMS.txt
 
