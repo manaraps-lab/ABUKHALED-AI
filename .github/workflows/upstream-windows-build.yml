@@ -125,7 +125,7 @@ jobs:
       - name: Build upstream Windows Electron installer and portable app
         working-directory: upstream
         shell: pwsh
-        run: npm run electron:build:win
+        run: npm run electron:build:win -- --publish never
 
       - name: Verify packaged output and collect installers
         shell: pwsh
