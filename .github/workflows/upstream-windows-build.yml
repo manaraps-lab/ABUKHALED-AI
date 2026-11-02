@@ -122,10 +122,20 @@ jobs:
         shell: pwsh
         run: npm ci --prefix electron --no-audit --no-fund
 
-      - name: Build upstream Windows Electron installer and portable app
+            - name: Build upstream application
         working-directory: upstream
         shell: pwsh
-        run: npm run electron:build:win -- --publish never
+        run: npm run build
+
+      - name: Prepare Electron application bundle
+        working-directory: upstream/electron
+        shell: pwsh
+        run: npm run prepare:bundle
+
+      - name: Build Windows installer and portable app without publishing
+        working-directory: upstream/electron
+        shell: pwsh
+        run: npx --no-install electron-builder --win --publish never
 
       - name: Verify packaged output and collect installers
         shell: pwsh
