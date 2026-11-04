@@ -1,5 +1,3 @@
-
-#!/usr/bin/env node
 /**
  * Applies the first ABUKHALED AI desktop identity layer to the pinned OmniRoute
  * source tree. Intentionally preserves appId and all OmniRoute data-directory
