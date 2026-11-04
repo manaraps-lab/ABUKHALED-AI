@@ -6,10 +6,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/upstream-windows-build.yml'
+      - 'scripts/apply-branding.mjs'
 
 permissions:
   contents: read
-
 concurrency:
   group: abukhaled-upstream-windows-${{ github.ref }}
   cancel-in-progress: false
@@ -23,7 +23,6 @@ jobs:
   upstream-build:
     runs-on: windows-latest
     timeout-minutes: 150
-
     steps:
       - name: Check out ABUKHALED AI integration repository
         uses: actions/checkout@v5
@@ -43,20 +42,17 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $sha = (git -C upstream rev-parse HEAD).Trim()
-
           if ($sha -notmatch '^[0-9a-f]{40}$') {
             throw 'Could not resolve an exact upstream commit SHA.'
           }
           if ($sha -ne $env:EXPECTED_UPSTREAM_SHA) {
             throw "Unapproved OmniRoute source commit: $sha. Expected $env:EXPECTED_UPSTREAM_SHA."
           }
-
           $root = Get-Content upstream/package.json -Raw | ConvertFrom-Json
           $electron = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
           if ($root.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw "Unexpected OmniRoute root version: $($root.version). Expected $env:EXPECTED_UPSTREAM_VERSION."
           }
-
           if ($electron.version -ne $root.version) {
             throw "Version mismatch: root=$($root.version), electron=$($electron.version)."
           }
@@ -73,7 +69,6 @@ jobs:
             "Electron package version: $($electron.version)"
             "Build runner: $env:RUNNER_OS / $env:RUNNER_ARCH"
           ) | Set-Content upstream-revision.txt
-
           Get-Content upstream-revision.txt
           "UPSTREAM_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Set up supported Node.js runtime
@@ -84,7 +79,12 @@ jobs:
           cache-dependency-path: |
             upstream/package-lock.json
             upstream/electron/package-lock.json
-
+      - name: Apply and verify ABUKHALED AI desktop branding
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --check abukhaled/scripts/apply-branding.mjs
+          node abukhaled/scripts/apply-branding.mjs upstream
       - name: Record toolchain versions
         shell: pwsh
         run: |
@@ -97,7 +97,6 @@ jobs:
         run: |
           npm config set allow-scripts=omniroute,keytar,onnxruntime-node,@parcel/watcher,@swc/core,protobufjs,esbuild
           npm config get allow-scripts
-
       - name: Install locked upstream dependencies
         working-directory: upstream
         shell: pwsh
@@ -106,12 +105,10 @@ jobs:
         working-directory: upstream
         shell: pwsh
         run: npm ci --prefix electron --no-audit --no-fund
-
       - name: Build upstream application
         working-directory: upstream
         shell: pwsh
         run: npm run build
-
       - name: Prepare Electron application bundle
         working-directory: upstream/electron
         shell: pwsh
@@ -120,8 +117,7 @@ jobs:
         working-directory: upstream/electron
         shell: pwsh
         run: npx --no-install electron-builder --win --publish never
-
-      - name: Verify packaged output and collect installers
+      - name: Verify branded packaged output and collect installers
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -129,28 +125,22 @@ jobs:
           if (-not (Test-Path $output)) {
             throw "Expected Electron output directory was not created: $output"
           }
-
           $files = @(Get-ChildItem -Path $output -File -Filter '*.exe')
-
           if ($files.Count -eq 0) {
             Get-ChildItem -Path $output -Force | Select-Object Name, Length
             throw 'No Windows EXE files were produced in electron/dist-electron.'
           }
-
-          $setup = @($files | Where-Object { $_.Name -match '(?i)setup.*\.exe$|\.setup\.' })
+          $setup = @($files | Where-Object { $_.Name -match '(?i)ABUKHALED AI\.Setup\..*\.exe$' })
           if ($setup.Count -eq 0) {
             $files | Select-Object Name, Length
-            throw 'EXE files exist, but no recognizable NSIS Setup installer was found.'
+            throw 'ABUKHALED AI NSIS Setup installer was not found; refusing to publish OmniRoute-branded output.'
           }
-
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-
           foreach ($file in $files) {
             Copy-Item -LiteralPath $file.FullName -Destination (Join-Path artifacts $file.Name) -Force
           }
           Copy-Item upstream-revision.txt artifacts/upstream-revision.txt -Force
           Get-ChildItem artifacts -File | Select-Object Name, Length
-
       - name: Smoke-test packaged Electron application
         working-directory: upstream
         shell: pwsh
@@ -164,13 +154,12 @@ jobs:
               $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
               "$hash  $($_.Name)"
             }
-
           $lines | Set-Content artifacts/SHA256SUMS.txt
           Get-Content artifacts/SHA256SUMS.txt
-      - name: Upload upstream build evidence
+      - name: Upload ABUKHALED AI Windows build evidence
         uses: actions/upload-artifact@v6
         with:
-          name: abukhaled-upstream-windows-build-${{ github.run_number }}
+          name: abukhaled-ai-windows-build-${{ github.run_number }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
