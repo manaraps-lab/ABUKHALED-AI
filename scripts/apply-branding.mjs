@@ -45,6 +45,8 @@ delete pkg.build.publish;
 fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 
 let main = read(mainPath);
+const mainEol = main.includes('\r\n') ? '\r\n' : '\n';
+main = main.replace(/\r\n/g, '\n');
 
 const replacements = [
   ['title: "OmniRoute",', 'title: "ABUKHALED AI",', 'window title'],
@@ -80,7 +82,7 @@ main = replaceExactly(
   'guard upstream update installation'
 );
 
-fs.writeFileSync(mainPath, main);
+fs.writeFileSync(mainPath, main.replace(/\n/g, mainEol));
 
 const finalPkg = JSON.parse(read(packagePath));
 const finalMain = read(mainPath);
