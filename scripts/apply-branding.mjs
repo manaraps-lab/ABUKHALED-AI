@@ -1,12 +1,13 @@
 /**
- * ABUKHALED AI branding integration for the pinned OmniRoute 3.8.53 source.
+ * ABUKHALED AI branding integration.
+ * Pinned upstream: OmniRoute 3.8.53
  *
- * Migration-safe rules:
- * - Preserve the original Electron appId.
- * - Preserve all upstream data-directory paths.
- * - Preserve the upstream version.
- * - Do not publish to the upstream GitHub release channel.
- * - Disable upstream update operations until an official ABUKHALED channel exists.
+ * Safety:
+ * - Preserve upstream appId and user-data paths.
+ * - Preserve upstream application version.
+ * - Do not publish to upstream release channels.
+ * - Disable upstream update operations until an official ABUKHALED
+ *   release channel is implemented and verified.
  */
 
 import fs from "node:fs";
@@ -24,136 +25,164 @@ function fail(message) {
 
 function read(file) {
   if (!fs.existsSync(file)) {
-    fail(`Required source file not found: ${file}`);
+    fail(`Required file not found: ${file}`);
   }
 
   return fs.readFileSync(file, "utf8");
 }
 
-function writeJson(file, value) {
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
-function replaceExactly(source, before, after, label) {
+function replaceCount(source, before, after, expected, label) {
   const count = source.split(before).length - 1;
 
-  if (count === 0 && source.includes(after)) {
-    return source;
+  if (count !== expected) {
+    fail(`${label}: expected ${expected} matches, found ${count}`);
   }
 
-  if (count !== 1) {
-    fail(`${label}: expected exactly one source match, found ${count}`);
-  }
-
-  return source.replace(before, after);
+  return source.split(before).join(after);
 }
 
-function replaceFunction(source, expression, replacement, label) {
-  const matches = [...source.matchAll(expression)];
+/*
+ * Replace a complete function using the next function's declaration
+ * as its boundary. This does not depend on comments or line endings
+ * between the two functions.
+ */
+function replaceFunctionBlock(source, startMarker, endMarker, replacement, label) {
+  const start = source.indexOf(startMarker);
 
-  if (matches.length !== 1) {
-    fail(`${label}: expected exactly one function block, found ${matches.length}`);
+  if (start === -1) {
+    fail(`${label}: start marker not found`);
   }
 
-  return source.replace(expression, replacement);
+  const secondStart = source.indexOf(startMarker, start + startMarker.length);
+
+  if (secondStart !== -1) {
+    fail(`${label}: start marker occurs more than once`);
+  }
+
+  const end = source.indexOf(endMarker, start + startMarker.length);
+
+  if (end === -1) {
+    fail(`${label}: end marker not found`);
+  }
+
+  if (end <= start) {
+    fail(`${label}: invalid function boundaries`);
+  }
+
+  return (
+    source.slice(0, start) +
+    replacement +
+    "\n" +
+    source.slice(end)
+  );
 }
+
+/* ---------------------------------------------------------------
+ * 1. Validate upstream package metadata.
+ * ------------------------------------------------------------- */
 
 if (!fs.existsSync(electronDir)) {
-  fail(`Electron source directory not found: ${electronDir}`);
+  fail(`Electron directory not found: ${electronDir}`);
 }
 
 const pkg = JSON.parse(read(packagePath));
 
 if (pkg.version !== "3.8.53") {
-  fail(`Unexpected Electron package version: ${pkg.version}`);
+  fail(`Unexpected Electron version: ${pkg.version}`);
 }
 
-if (!pkg.build || pkg.build.appId !== "online.omniroute.desktop") {
-  fail("Electron appId differs from the reviewed upstream baseline; stop for data-path review.");
+if (!pkg.build) {
+  fail("Electron build configuration is missing.");
+}
+
+if (pkg.build.appId !== "online.omniroute.desktop") {
+  fail("Unexpected upstream appId. Refusing to risk changing the data identity.");
 }
 
 if (!pkg.build.win || !Array.isArray(pkg.build.win.target)) {
   fail("Unexpected Windows packaging configuration.");
 }
 
-if (!pkg.build.nsis || !pkg.build.nsis.artifactName) {
-  fail("Unexpected NSIS installer configuration.");
+if (!pkg.build.nsis) {
+  fail("NSIS configuration is missing.");
 }
 
-/*
- * Apply product identity while retaining the original appId and paths.
- */
+/* ---------------------------------------------------------------
+ * 2. Apply product identity without changing appId or version.
+ * ------------------------------------------------------------- */
+
 pkg.build.productName = "ABUKHALED AI";
 pkg.build.copyright = "Copyright © 2026 ABUKHALED AI";
 
 /*
- * Remove the upstream publishing destination.
- * Do not configure a new release destination until it exists and is verified.
+ * Remove upstream publishing configuration.
+ * No new publishing destination is configured at this stage.
  */
 delete pkg.build.publish;
 
-writeJson(packagePath, pkg);
+fs.writeFileSync(
+  packagePath,
+  `${JSON.stringify(pkg, null, 2)}\n`,
+  "utf8"
+);
 
-/*
- * Normalize line endings before source transformations.
- * Restore the original line-ending style when writing the file.
- */
+/* ---------------------------------------------------------------
+ * 3. Read main process and normalize line endings.
+ * ------------------------------------------------------------- */
+
 let main = read(mainPath);
+
 const originalEol = main.includes("\r\n") ? "\r\n" : "\n";
 
 main = main.replace(/\r\n/g, "\n");
 
-/*
- * Desktop identity strings.
- */
-const brandingReplacements = [
-  [
-    'title: "OmniRoute",',
-    'title: "ABUKHALED AI",',
-    "window title",
-  ],
-  [
-    'label: "Open OmniRoute",',
-    'label: "Open ABUKHALED AI",',
-    "tray menu label",
-  ],
-  [
-    'tray.setToolTip("OmniRoute");',
-    'tray.setToolTip("ABUKHALED AI");',
-    "tray tooltip",
-  ],
-  [
-    'title: "OmniRoute Update Ready",',
-    'title: "ABUKHALED AI Update Ready",',
-    "update notification title",
-  ],
-  [
-    '"Name=OmniRoute",',
-    '"Name=ABUKHALED AI",',
-    "desktop autostart name",
-  ],
-  [
-    '"Comment=OmniRoute Desktop Client",',
-    '"Comment=ABUKHALED AI Desktop Client",',
-    "desktop autostart description",
-  ],
-];
-
-for (const [before, after, label] of brandingReplacements) {
-  main = replaceExactly(main, before, after, label);
-}
-
-/*
- * Replace complete updater functions.
+/* ---------------------------------------------------------------
+ * 4. Apply desktop branding.
  *
- * This avoids inserting early returns into the original functions,
- * leaving unreachable code, or relying on fragile line-ending matches.
- */
-main = replaceFunction(
+ * The upstream source contains two title declarations:
+ * - Update notification title
+ * - Main BrowserWindow title
+ * ------------------------------------------------------------- */
+
+main = replaceCount(
   main,
-  /async function checkForUpdates\(silent = false\) \{[\s\S]*?\n\}(?=\nasync function downloadUpdate\(\))/g,
+  'title: "OmniRoute",',
+  'title: "ABUKHALED AI",',
+  2,
+  "desktop and notification titles"
+);
+
+main = replaceCount(
+  main,
+  'label: "Open OmniRoute",',
+  'label: "Open ABUKHALED AI",',
+  1,
+  "tray menu label"
+);
+
+main = replaceCount(
+  main,
+  'tray.setToolTip("OmniRoute");',
+  'tray.setToolTip("ABUKHALED AI");',
+  1,
+  "tray tooltip"
+);
+
+/* ---------------------------------------------------------------
+ * 5. Disable upstream auto-update operations.
+ *
+ * The markers below match the actual function order in the
+ * approved upstream main.js source.
+ * ------------------------------------------------------------- */
+
+main = replaceFunctionBlock(
+  main,
+  "async function checkForUpdates(silent = false) {",
+  "async function downloadUpdate() {",
   `async function checkForUpdates(silent = false) {
-  console.info("[ABUKHALED AI] Updates are disabled until the official release channel is configured.");
+  console.info(
+    "[ABUKHALED AI] Automatic updates are disabled until the official release channel is configured."
+  );
 
   if (!silent) {
     sendToRenderer("update-status", {
@@ -167,82 +196,108 @@ main = replaceFunction(
   "disable upstream auto-update checks"
 );
 
-main = replaceFunction(
+main = replaceFunctionBlock(
   main,
-  /async function downloadUpdate\(\) \{[\s\S]*?\n\}(?=\nfunction installUpdate\(\))/g,
+  "async function downloadUpdate() {",
+  "function installUpdate() {",
   `async function downloadUpdate() {
-  throw new Error("ABUKHALED AI update channel is not configured.");
+  throw new Error(
+    "ABUKHALED AI update channel is not configured."
+  );
 }`,
-  "guard upstream update downloads"
+  "disable upstream update downloads"
 );
 
-main = replaceFunction(
+main = replaceFunctionBlock(
   main,
-  /function installUpdate\(\) \{[\s\S]*?\n\}(?=\n\/\/ ── Content Security Policy)/g,
+  "function installUpdate() {",
+  "// ── Content Security Policy",
   `function installUpdate() {
-  console.warn("[ABUKHALED AI] Update installation is disabled until the official release channel is configured.");
+  console.warn(
+    "[ABUKHALED AI] Update installation is disabled until the official release channel is configured."
+  );
+
   return;
 }`,
-  "guard upstream update installation"
+  "disable upstream update installation"
 );
 
 /*
- * Restore original line-ending style and save.
+ * Prevent automatic installation on application exit as well.
+ * This setting is defined near the updater configuration.
  */
-fs.writeFileSync(
-  mainPath,
-  originalEol === "\r\n" ? main.replace(/\n/g, "\r\n") : main,
-  "utf8"
+main = replaceCount(
+  main,
+  "autoUpdater.autoInstallOnAppQuit = true;",
+  "autoUpdater.autoInstallOnAppQuit = false;",
+  1,
+  "disable automatic update installation on quit"
 );
 
-/*
- * Post-change verification.
- */
+/* ---------------------------------------------------------------
+ * 6. Write main.js using its original line-ending convention.
+ * ------------------------------------------------------------- */
+
+const outputMain =
+  originalEol === "\r\n"
+    ? main.replace(/\n/g, "\r\n")
+    : main;
+
+fs.writeFileSync(mainPath, outputMain, "utf8");
+
+/* ---------------------------------------------------------------
+ * 7. Verify all postconditions.
+ * ------------------------------------------------------------- */
+
 const finalPkg = JSON.parse(read(packagePath));
 let finalMain = read(mainPath);
 
 finalMain = finalMain.replace(/\r\n/g, "\n");
 
 if (finalPkg.version !== "3.8.53") {
-  fail("Version postcondition failed.");
+  fail("Version verification failed.");
 }
 
 if (finalPkg.build.productName !== "ABUKHALED AI") {
-  fail("productName postcondition failed.");
+  fail("Product name verification failed.");
 }
 
 if (finalPkg.build.appId !== "online.omniroute.desktop") {
-  fail("appId must remain unchanged in migration-safe phase.");
+  fail("Original appId was not preserved.");
 }
 
 if (Object.hasOwn(finalPkg.build, "publish")) {
-  fail("Upstream publish configuration still exists.");
+  fail("Upstream publishing configuration is still present.");
 }
 
-for (const text of [
-  'title: "ABUKHALED AI",',
-  'label: "Open ABUKHALED AI",',
-  'tray.setToolTip("ABUKHALED AI");',
-]) {
-  if (!finalMain.includes(text)) {
-    fail(`Branding postcondition failed: ${text}`);
-  }
+if (
+  finalMain.split('title: "ABUKHALED AI",').length - 1 !== 2
+) {
+  fail("Desktop title verification failed.");
+}
+
+if (!finalMain.includes('label: "Open ABUKHALED AI",')) {
+  fail("Tray menu branding verification failed.");
+}
+
+if (!finalMain.includes('tray.setToolTip("ABUKHALED AI");')) {
+  fail("Tray tooltip verification failed.");
 }
 
 if (
   !finalMain.includes(
-    "Updates are disabled until the official release channel is configured."
+    "Automatic updates are disabled until the official release channel is configured."
   )
 ) {
-  fail("Updater isolation postcondition failed.");
+  fail("Auto-update check guard verification failed.");
 }
 
 if (
   !finalMain.includes(
-    'throw new Error("ABUKHALED AI update channel is not configured.");'
+    "ABUKHALED AI update channel is not configured."
   )
 ) {
-  fail("Update download guard postcondition failed.");
+  fail("Update download guard verification failed.");
 }
 
 if (
@@ -250,12 +305,28 @@ if (
     "Update installation is disabled until the official release channel is configured."
   )
 ) {
-  fail("Update installation guard postcondition failed.");
+  fail("Update installation guard verification failed.");
 }
 
+if (!finalMain.includes("autoUpdater.autoInstallOnAppQuit = false;")) {
+  fail("Automatic update installation on quit is not disabled.");
+}
+
+/* ---------------------------------------------------------------
+ * 8. Report verified changes.
+ * ------------------------------------------------------------- */
+
+console.log("");
+console.log("==============================================");
 console.log("[ABUKHALED branding] Applied and verified.");
-console.log(`Product: ${finalPkg.build.productName}`);
+console.log("==============================================");
+console.log(`Product name: ${finalPkg.build.productName}`);
 console.log(`Version: ${finalPkg.version}`);
 console.log(`Preserved appId: ${finalPkg.build.appId}`);
-console.log("Upstream publish target: removed");
-console.log("Upstream auto-update checks/download/install: disabled");
+console.log("Upstream publishing: disabled");
+console.log("Automatic update checks: disabled");
+console.log("Update downloads: disabled");
+console.log("Update installation: disabled");
+console.log("Automatic installation on quit: disabled");
+console.log("Desktop title and tray branding: verified");
+console.log("==============================================");
