@@ -3,16 +3,19 @@ name: ABUKHALED AI - Upstream Windows Build Bridge
 on:
   workflow_dispatch: {}
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - '.github/workflows/upstream-windows-build.yml'
       - 'scripts/apply-branding.mjs'
 
 permissions:
   contents: read
+
 concurrency:
   group: abukhaled-upstream-windows-${{ github.ref }}
   cancel-in-progress: false
+
 env:
   UPSTREAM_REPOSITORY: cheaper-inference/OmniRoute
   UPSTREAM_REF: 5dbd2eb6880f9e7bd1962c44df5710cf46f52096
@@ -23,12 +26,14 @@ jobs:
   upstream-build:
     runs-on: windows-latest
     timeout-minutes: 150
+
     steps:
       - name: Check out ABUKHALED AI integration repository
         uses: actions/checkout@v5
         with:
           path: abukhaled
           persist-credentials: false
+
       - name: Fetch official OmniRoute source
         uses: actions/checkout@v5
         with:
@@ -37,30 +42,42 @@ jobs:
           path: upstream
           fetch-depth: 1
           persist-credentials: false
+
       - name: Verify pinned source metadata and required lockfiles
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
           $sha = (git -C upstream rev-parse HEAD).Trim()
+
           if ($sha -notmatch '^[0-9a-f]{40}$') {
             throw 'Could not resolve an exact upstream commit SHA.'
           }
+
           if ($sha -ne $env:EXPECTED_UPSTREAM_SHA) {
             throw "Unapproved OmniRoute source commit: $sha. Expected $env:EXPECTED_UPSTREAM_SHA."
           }
+
           $root = Get-Content upstream/package.json -Raw | ConvertFrom-Json
           $electron = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
+
           if ($root.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw "Unexpected OmniRoute root version: $($root.version). Expected $env:EXPECTED_UPSTREAM_VERSION."
           }
+
           if ($electron.version -ne $root.version) {
             throw "Version mismatch: root=$($root.version), electron=$($electron.version)."
           }
-          foreach ($lock in @('upstream/package-lock.json', 'upstream/electron/package-lock.json')) {
-            if (-not (Test-Path $lock)) {
+
+          foreach ($lock in @(
+            'upstream/package-lock.json',
+            'upstream/electron/package-lock.json'
+          )) {
+            if (-not (Test-Path -LiteralPath $lock -PathType Leaf)) {
               throw "Required lockfile is missing: $lock"
             }
           }
+
           @(
             "Repository: $env:UPSTREAM_REPOSITORY"
             "Pinned upstream SHA: $env:EXPECTED_UPSTREAM_SHA"
@@ -69,8 +86,10 @@ jobs:
             "Electron package version: $($electron.version)"
             "Build runner: $env:RUNNER_OS / $env:RUNNER_ARCH"
           ) | Set-Content upstream-revision.txt
+
           Get-Content upstream-revision.txt
           "UPSTREAM_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Set up supported Node.js runtime
         uses: actions/setup-node@v5
         with:
@@ -79,101 +98,217 @@ jobs:
           cache-dependency-path: |
             upstream/package-lock.json
             upstream/electron/package-lock.json
+
       - name: Apply and verify ABUKHALED AI desktop branding
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
           node --check abukhaled/scripts/apply-branding.mjs
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Branding script syntax validation failed.'
+          }
+
           node abukhaled/scripts/apply-branding.mjs upstream
+          if ($LASTEXITCODE -ne 0) {
+            throw 'ABUKHALED AI branding failed.'
+          }
+
       - name: Record toolchain versions
         shell: pwsh
         run: |
           node --version
           npm --version
           git --version
+
       - name: Allow required upstream dependency lifecycle scripts
         working-directory: upstream
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           npm config set allow-scripts=omniroute,keytar,onnxruntime-node,@parcel/watcher,@swc/core,protobufjs,esbuild
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not configure required dependency lifecycle scripts.'
+          }
           npm config get allow-scripts
+
       - name: Install locked upstream dependencies
         working-directory: upstream
         shell: pwsh
-        run: npm ci --no-audit --no-fund
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Upstream dependency installation failed.'
+          }
+
       - name: Install locked Electron dependencies
         working-directory: upstream
         shell: pwsh
-        run: npm ci --prefix electron --no-audit --no-fund
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci --prefix electron --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Electron dependency installation failed.'
+          }
+
       - name: Build upstream application
         working-directory: upstream
         shell: pwsh
-        run: npm run build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run build
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Upstream application build failed.'
+          }
+
       - name: Prepare Electron application bundle
         working-directory: upstream/electron
         shell: pwsh
-        run: npm run prepare:bundle
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run prepare:bundle
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Electron bundle preparation failed.'
+          }
+
       - name: Build Windows installer and portable app without publishing
         working-directory: upstream/electron
         shell: pwsh
-        run: npx --no-install electron-builder --win --publish never
-      - name: Verify branded packaged output and collect installers
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx --no-install electron-builder --win --publish never
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Windows packaging failed.'
+          }
+
+      - name: Verify branded packaged output
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
           $output = Join-Path (Resolve-Path upstream).Path 'electron\dist-electron'
-          if (-not (Test-Path $output)) {
+
+          if (-not (Test-Path -LiteralPath $output -PathType Container)) {
             throw "Expected Electron output directory was not created: $output"
           }
-          $files = @(Get-ChildItem -Path $output -File -Filter '*.exe')
+
+          Write-Host 'Electron output directory:'
+          Get-ChildItem -LiteralPath $output -Force |
+            Select-Object Name, Length
+
+          $files = @(Get-ChildItem -LiteralPath $output -File -Filter '*.exe')
+
           if ($files.Count -eq 0) {
-            Get-ChildItem -Path $output -Force | Select-Object Name, Length
-            throw 'No Windows EXE files were produced in electron/dist-electron.'
+            throw 'No Windows EXE files were produced.'
           }
-          $setup = @($files | Where-Object { $_.Name -match '(?i)ABUKHALED AI\.Setup\..*\.exe$' })
-          if ($setup.Count -eq 0) {
+
+          $setup = @(
+            $files | Where-Object {
+              $_.Name -match '(?i)^ABUKHALED AI\.Setup\..*\.exe$'
+            }
+          )
+
+          if ($setup.Count -ne 1) {
             $files | Select-Object Name, Length
-            throw 'ABUKHALED AI NSIS Setup installer was not found; refusing to publish OmniRoute-branded output.'
+            throw "Expected exactly one ABUKHALED AI Setup installer; found $($setup.Count)."
           }
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          foreach ($file in $files) {
-            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path artifacts $file.Name) -Force
+
+          $unpacked = Join-Path $output 'win-unpacked'
+
+          if (-not (Test-Path -LiteralPath $unpacked -PathType Container)) {
+            throw "Electron unpacked application directory not found: $unpacked"
           }
-          Copy-Item upstream-revision.txt artifacts/upstream-revision.txt -Force
-          Get-ChildItem artifacts -File | Select-Object Name, Length
-            - name: Smoke-test packaged Electron application
+
+          $appExecutables = @(
+            Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe'
+          )
+
+          if ($appExecutables.Count -ne 1) {
+            $appExecutables | Select-Object Name, Length
+            throw "Expected exactly one top-level application executable; found $($appExecutables.Count)."
+          }
+
+          $appExe = $appExecutables[0].FullName
+
+          if ($appExecutables[0].BaseName -ne 'ABUKHALED AI') {
+            throw "Unexpected packaged executable name: $($appExecutables[0].Name)"
+          }
+
+          "ELECTRON_SMOKE_APP_EXECUTABLE=$appExe" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          Write-Host "Verified installer: $($setup[0].FullName)"
+          Write-Host "Verified application: $appExe"
+
+      - name: Smoke-test packaged Electron application
         working-directory: upstream
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $unpacked = Join-Path (Get-Location).Path 'electron\dist-electron\win-unpacked'
-          $appExe = Join-Path $unpacked 'ABUKHALED AI.exe'
-
-          if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
-            Write-Host "Packaged directory contents:"
-            if (Test-Path $unpacked) {
-              Get-ChildItem -LiteralPath $unpacked -Force |
-                Select-Object Name, Length
-            }
-            throw "ABUKHALED AI executable not found: $appExe"
+          if (-not $env:ELECTRON_SMOKE_APP_EXECUTABLE) {
+            throw 'ELECTRON_SMOKE_APP_EXECUTABLE was not configured.'
           }
 
-          $env:ELECTRON_SMOKE_APP_EXECUTABLE = $appExe
+          if (-not (Test-Path -LiteralPath $env:ELECTRON_SMOKE_APP_EXECUTABLE -PathType Leaf)) {
+            throw "Packaged executable does not exist: $env:ELECTRON_SMOKE_APP_EXECUTABLE"
+          }
+
           Write-Host "Smoke-testing: $env:ELECTRON_SMOKE_APP_EXECUTABLE"
 
           npm run electron:smoke:packaged
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Packaged Electron smoke test failed.'
+          }
+
+      - name: Collect verified Windows build artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $output = Join-Path (Resolve-Path upstream).Path 'electron\dist-electron'
+          $artifactFiles = @(
+            Get-ChildItem -LiteralPath $output -File -Filter '*.exe'
+          )
+
+          if ($artifactFiles.Count -lt 2) {
+            throw "Expected installer and portable executable; found $($artifactFiles.Count) EXE files."
+          }
+
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          foreach ($file in $artifactFiles) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path artifacts $file.Name) -Force
+          }
+
+          Copy-Item -LiteralPath upstream-revision.txt -Destination artifacts/upstream-revision.txt -Force
+
+          Get-ChildItem -LiteralPath artifacts -File |
+            Select-Object Name, Length
+
       - name: Create SHA-256 checksums for build artifacts
         shell: pwsh
         run: |
-          $lines = Get-ChildItem artifacts -File |
-            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
-            ForEach-Object {
-              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-              "$hash  $($_.Name)"
-            }
-          $lines | Set-Content artifacts/SHA256SUMS.txt
-          Get-Content artifacts/SHA256SUMS.txt
+          $ErrorActionPreference = 'Stop'
+
+          $lines = @(
+            Get-ChildItem -LiteralPath artifacts -File |
+              Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+              ForEach-Object {
+                $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                "$hash  $($_.Name)"
+              }
+          )
+
+          if ($lines.Count -lt 3) {
+            throw 'Insufficient build evidence files for checksum generation.'
+          }
+
+          $lines | Set-Content -LiteralPath artifacts/SHA256SUMS.txt
+          Get-Content -LiteralPath artifacts/SHA256SUMS.txt
+
       - name: Upload ABUKHALED AI Windows build evidence
         uses: actions/upload-artifact@v6
         with:
