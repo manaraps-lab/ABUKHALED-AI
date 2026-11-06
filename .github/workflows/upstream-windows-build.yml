@@ -141,10 +141,28 @@ jobs:
           }
           Copy-Item upstream-revision.txt artifacts/upstream-revision.txt -Force
           Get-ChildItem artifacts -File | Select-Object Name, Length
-      - name: Smoke-test packaged Electron application
+            - name: Smoke-test packaged Electron application
         working-directory: upstream
         shell: pwsh
-        run: npm run electron:smoke:packaged
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $unpacked = Join-Path (Get-Location).Path 'electron\dist-electron\win-unpacked'
+          $appExe = Join-Path $unpacked 'ABUKHALED AI.exe'
+
+          if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
+            Write-Host "Packaged directory contents:"
+            if (Test-Path $unpacked) {
+              Get-ChildItem -LiteralPath $unpacked -Force |
+                Select-Object Name, Length
+            }
+            throw "ABUKHALED AI executable not found: $appExe"
+          }
+
+          $env:ELECTRON_SMOKE_APP_EXECUTABLE = $appExe
+          Write-Host "Smoke-testing: $env:ELECTRON_SMOKE_APP_EXECUTABLE"
+
+          npm run electron:smoke:packaged
       - name: Create SHA-256 checksums for build artifacts
         shell: pwsh
         run: |
