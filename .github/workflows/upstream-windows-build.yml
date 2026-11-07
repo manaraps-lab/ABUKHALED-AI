@@ -136,7 +136,23 @@ jobs:
       - name: Smoke-test packaged Electron app
         working-directory: upstream
         shell: pwsh
-        run: npm run electron:smoke:packaged
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Branding changes electron-builder's executable name from OmniRoute.exe.
+          # The upstream smoke script supports an explicit executable override.
+          $unpacked = (Resolve-Path 'electron\dist-electron\win-unpacked').Path
+          if (-not (Test-Path $unpacked)) {
+            throw "Packaged app directory not found: $unpacked"
+          }
+          $appExecutables = @(Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' |
+            Where-Object { $_.Name -notmatch '^(?i:unins|uninstall)' })
+          if ($appExecutables.Count -ne 1) {
+            Get-ChildItem -LiteralPath $unpacked -Force | Select-Object Name, Length
+            throw "Expected exactly one packaged application executable in $unpacked; found $($appExecutables.Count)."
+          }
+          $env:ELECTRON_SMOKE_APP_EXECUTABLE = $appExecutables[0].FullName
+          Write-Host "[ABUKHALED smoke] Testing executable: $env:ELECTRON_SMOKE_APP_EXECUTABLE"
+          npm run electron:smoke:packaged
 
       - name: Verify packaged metadata
         shell: pwsh
