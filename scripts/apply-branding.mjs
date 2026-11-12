@@ -1,5 +1,4 @@
 
-#!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,10 +23,6 @@ function read(file) {
   return fs.readFileSync(file, 'utf8');
 }
 
-function write(file, value) {
-  fs.writeFileSync(file, value, 'utf8');
-}
-
 function replaceLiteral(source, before, after, label) {
   const count = source.split(before).length - 1;
 
@@ -42,60 +37,139 @@ function replaceLiteral(source, before, after, label) {
   return source.replace(before, after);
 }
 
-function replaceTopLevelFunction(source, name, replacement) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  const pattern = new RegExp(
-    `^async function ${escaped}\\s*\\([^\\n]*\\)\\s*\\{[\\s\\S]*?^\\}`,
+// Locate a complete top-level function using balanced braces.
+function replaceFunction(source, name, replacement, isAsync = false) {
+  const prefix = isAsync ? 'async function' : 'function';
+  const declaration = new RegExp(
+    `^${prefix}\\s+${name}\\s*\\([^\\n]*\\)\\s*\\{`,
     'm'
   );
 
-  if (!pattern.test(source)) {
-    fail(`could not locate top-level async function ${name}`);
+  const match = declaration.exec(source);
+
+  if (!match) {
+    fail(`Could not locate ${prefix} ${name}`);
   }
 
-  return source.replace(pattern, replacement);
-}
+  const start = match.index;
+  const openBrace = source.indexOf('{', start);
 
-function replaceTopLevelSyncFunction(source, name, replacement) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  let templateExpressionDepth = 0;
 
-  const pattern = new RegExp(
-    `^function ${escaped}\\s*\\([^\\n]*\\)\\s*\\{[\\s\\S]*?^\\}`,
-    'm'
-  );
+  for (let i = openBrace; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
 
-  if (!pattern.test(source)) {
-    fail(`could not locate top-level function ${name}`);
+    if (lineComment) {
+      if (char === '\n') lineComment = false;
+      continue;
+    }
+
+    if (blockComment) {
+      if (char === '*' && next === '/') {
+        blockComment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (quote === '`' && char === '$' && next === '{') {
+        templateExpressionDepth++;
+        depth++;
+        i++;
+        quote = null;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      lineComment = true;
+      i++;
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      blockComment = true;
+      i++;
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+
+    if (char === '{') {
+      depth++;
+      continue;
+    }
+
+    if (char === '}') {
+      depth--;
+
+      if (templateExpressionDepth > 0 && depth === 0) {
+        templateExpressionDepth--;
+        quote = '`';
+        continue;
+      }
+
+      if (depth === 0) {
+        const end = i + 1;
+        return source.slice(0, start) + replacement + source.slice(end);
+      }
+    }
   }
 
-  return source.replace(pattern, replacement);
+  fail(`Could not find the closing brace of ${name}`);
 }
 
-// Verify the pinned upstream version and original application identity.
+// Verify upstream identity.
 const pkg = JSON.parse(read(packagePath));
 
 if (pkg.version !== '3.8.53') {
-  fail(`expected OmniRoute 3.8.53, found ${pkg.version}`);
+  fail(`Expected OmniRoute 3.8.53, found ${pkg.version}`);
 }
 
 if (pkg.build?.appId !== 'online.omniroute.desktop') {
-  fail(`unexpected appId: ${pkg.build?.appId ?? '(missing)'}`);
+  fail(`Unexpected appId: ${pkg.build?.appId ?? '(missing)'}`);
 }
 
 // Apply ABUKHALED AI identity.
 pkg.build.productName = 'ABUKHALED AI';
 pkg.build.copyright = 'Copyright © 2026 ABUKHALED AI';
 
-// Never publish this fork to upstream GitHub releases.
 delete pkg.build.publish;
 
-write(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+fs.writeFileSync(
+  packagePath,
+  `${JSON.stringify(pkg, null, 2)}\n`,
+  'utf8'
+);
 
-// Read source and normalize Windows/Linux line endings.
+// Update Electron desktop identity.
 let main = read(mainPath).replace(/\r\n?/g, '\n');
 
-// Desktop identity.
 main = replaceLiteral(
   main,
   'title: "OmniRoute",',
@@ -124,7 +198,6 @@ main = replaceLiteral(
   'update notification title'
 );
 
-// Linux autostart identity.
 main = replaceLiteral(
   main,
   '"Name=OmniRoute",',
@@ -139,97 +212,98 @@ main = replaceLiteral(
   'Linux autostart comment'
 );
 
-// Disable upstream update checks.
-// Updates must eventually come from an ABUKHALED-owned release channel.
-main = replaceTopLevelFunction(
+// Disable upstream automatic update checks.
+main = replaceFunction(
   main,
   'checkForUpdates',
   `async function checkForUpdates(silent = false) {
-  console.info("[ABUKHALED AI] Upstream auto-updates are disabled; use the ABUKHALED AI release channel.");
+  console.info("[ABUKHALED AI] Upstream auto-updates are disabled.");
 
   if (!silent) {
     sendToRenderer("update-status", {
       status: "error",
-      message: "Automatic updates are managed by ABUKHALED AI and are not available in this build.",
+      message: "Updates are managed by ABUKHALED AI.",
     });
   }
 
   return;
-}`
+}`,
+  true
 );
 
 // Disable upstream update downloads.
-main = replaceTopLevelFunction(
+main = replaceFunction(
   main,
   'downloadUpdate',
   `async function downloadUpdate() {
   console.info("[ABUKHALED AI] Upstream update downloads are disabled.");
   return;
-}`
+}`,
+  true
 );
 
 // Disable upstream update installation.
-main = replaceTopLevelSyncFunction(
+main = replaceFunction(
   main,
   'installUpdate',
   `function installUpdate() {
   console.info("[ABUKHALED AI] Upstream update installation is disabled.");
   return;
-}`
+}`,
+  false
 );
 
-write(mainPath, main);
+fs.writeFileSync(mainPath, main, 'utf8');
 
-// Copy ABUKHALED icons into Electron build resources.
+// Copy ABUKHALED AI icon assets.
 for (const filename of ['icon.ico', 'icon.png', 'tray-icon.png']) {
   const source = path.join(assetsSourceDir, filename);
 
   if (!fs.existsSync(source)) {
-    fail(`branding asset is missing: ${source}`);
+    fail(`Branding asset is missing: ${source}`);
   }
 
   fs.mkdirSync(assetsTargetDir, { recursive: true });
   fs.copyFileSync(source, path.join(assetsTargetDir, filename));
 }
 
-// Verify the final result.
+// Final verification.
 const finalPkg = JSON.parse(read(packagePath));
 const finalMain = read(mainPath);
 
 if (finalPkg.version !== '3.8.53') {
-  fail('version changed unexpectedly');
+  fail('Upstream version changed unexpectedly');
 }
 
 if (finalPkg.build?.appId !== 'online.omniroute.desktop') {
-  fail('appId changed unexpectedly');
+  fail('Original appId was not preserved');
 }
 
 if (finalPkg.build?.productName !== 'ABUKHALED AI') {
-  fail('productName branding was not applied');
+  fail('Product branding verification failed');
 }
 
 if (Object.hasOwn(finalPkg.build || {}, 'publish')) {
-  fail('upstream publish configuration remains enabled');
+  fail('Upstream publish configuration remains enabled');
 }
 
-if (!finalMain.includes('Upstream auto-updates are disabled')) {
-  fail('upstream update check was not disabled');
-}
-
-if (!finalMain.includes('Upstream update downloads are disabled')) {
-  fail('upstream update download was not disabled');
-}
-
-if (!finalMain.includes('Upstream update installation is disabled')) {
-  fail('upstream update installation was not disabled');
+for (const marker of [
+  'Upstream auto-updates are disabled',
+  'Upstream update downloads are disabled',
+  'Upstream update installation is disabled',
+]) {
+  if (!finalMain.includes(marker)) {
+    fail(`Verification failed: ${marker}`);
+  }
 }
 
 for (const filename of ['icon.ico', 'icon.png', 'tray-icon.png']) {
   if (!fs.existsSync(path.join(assetsTargetDir, filename))) {
-    fail(`asset copy verification failed: ${filename}`);
+    fail(`Asset verification failed: ${filename}`);
   }
 }
 
-console.log('[ABUKHALED branding] Branding applied and postconditions passed.');
-console.log('[ABUKHALED branding] Upstream version: 3.8.53');
-console.log('[ABUKHALED branding] appId preserved: online.omniroute.desktop');
+console.log('[ABUKHALED branding] Branding applied successfully.');
+console.log('[ABUKHALED branding] Version: 3.8.53');
+console.log('[ABUKHALED branding] Original appId preserved.');
+console.log('[ABUKHALED branding] Icon assets copied and verified.');
