@@ -8,8 +8,11 @@ const root = path.resolve(process.argv[2] || 'upstream');
 const electronDir = path.join(root, 'electron');
 const packagePath = path.join(electronDir, 'package.json');
 const mainPath = path.join(electronDir, 'main.js');
+const layoutPath = path.join(root, 'src', 'app', 'layout.tsx');
 const assetsSourceDir = path.resolve(scriptDir, '..', 'assets');
 const assetsTargetDir = path.join(electronDir, 'assets');
+
+const BRAND = 'ABUKHALED AI';
 
 function fail(message) {
   console.error(`[ABUKHALED branding] ERROR: ${message}`);
@@ -155,8 +158,8 @@ if (pkg.build?.appId !== 'online.omniroute.desktop') {
   fail(`Unexpected appId: ${pkg.build?.appId ?? '(missing)'}`);
 }
 
-// Apply ABUKHALED AI identity.
-pkg.build.productName = 'ABUKHALED AI';
+// Apply ABUKHALED AI package identity.
+pkg.build.productName = BRAND;
 pkg.build.copyright = 'Copyright © 2026 ABUKHALED AI';
 
 delete pkg.build.publish;
@@ -255,7 +258,28 @@ main = replaceFunction(
 
 fs.writeFileSync(mainPath, main, 'utf8');
 
+// Update the dashboard/browser page identity.
+let layout = read(layoutPath).replace(/\r\n?/g, '\n');
+
+layout = replaceLiteral(
+  layout,
+  'const instanceName = settings.instanceName;',
+  'const instanceName = "ABUKHALED AI";',
+  'dashboard application name'
+);
+
+layout = replaceLiteral(
+  layout,
+  '"OmniRoute is an AI gateway for multi-provider LLMs. One endpoint for all your AI providers.",',
+  '"ABUKHALED AI is an AI gateway for multi-provider LLMs. One endpoint for your AI providers.",',
+  'dashboard metadata description'
+);
+
+fs.writeFileSync(layoutPath, layout, 'utf8');
+
 // Copy ABUKHALED AI icon assets.
+fs.mkdirSync(assetsTargetDir, { recursive: true });
+
 for (const filename of ['icon.ico', 'icon.png', 'tray-icon.png']) {
   const source = path.join(assetsSourceDir, filename);
 
@@ -263,13 +287,13 @@ for (const filename of ['icon.ico', 'icon.png', 'tray-icon.png']) {
     fail(`Branding asset is missing: ${source}`);
   }
 
-  fs.mkdirSync(assetsTargetDir, { recursive: true });
   fs.copyFileSync(source, path.join(assetsTargetDir, filename));
 }
 
 // Final verification.
 const finalPkg = JSON.parse(read(packagePath));
 const finalMain = read(mainPath);
+const finalLayout = read(layoutPath);
 
 if (finalPkg.version !== '3.8.53') {
   fail('Upstream version changed unexpectedly');
@@ -279,7 +303,7 @@ if (finalPkg.build?.appId !== 'online.omniroute.desktop') {
   fail('Original appId was not preserved');
 }
 
-if (finalPkg.build?.productName !== 'ABUKHALED AI') {
+if (finalPkg.build?.productName !== BRAND) {
   fail('Product branding verification failed');
 }
 
@@ -293,7 +317,19 @@ for (const marker of [
   'Upstream update installation is disabled',
 ]) {
   if (!finalMain.includes(marker)) {
-    fail(`Verification failed: ${marker}`);
+    fail(`Electron verification failed: ${marker}`);
+  }
+}
+
+for (const marker of [
+  'const instanceName = "ABUKHALED AI";',
+  'title: `${instanceName} — AI Gateway for Multi-Provider LLMs`,',
+  'applicationName: instanceName,',
+  'title: instanceName,',
+  'ABUKHALED AI is an AI gateway for multi-provider LLMs.',
+]) {
+  if (!finalLayout.includes(marker)) {
+    fail(`Dashboard branding verification failed: ${marker}`);
   }
 }
 
@@ -306,4 +342,6 @@ for (const filename of ['icon.ico', 'icon.png', 'tray-icon.png']) {
 console.log('[ABUKHALED branding] Branding applied successfully.');
 console.log('[ABUKHALED branding] Version: 3.8.53');
 console.log('[ABUKHALED branding] Original appId preserved.');
+console.log('[ABUKHALED branding] Electron identity verified.');
+console.log('[ABUKHALED branding] Dashboard title verified.');
 console.log('[ABUKHALED branding] Icon assets copied and verified.');
