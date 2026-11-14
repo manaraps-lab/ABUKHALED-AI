@@ -1,4 +1,7 @@
-name: ABUKHALED AI - Pinned Windows Build
+
+name: ABUKHALED AI - Branded Windows Build
+
+run-name: ABUKHALED AI Windows Build #${{ github.run_number }}
 
 on:
   workflow_dispatch:
@@ -7,6 +10,7 @@ on:
     paths:
       - '.github/workflows/upstream-windows-build.yml'
       - 'scripts/apply-branding.mjs'
+      - 'assets/**'
 
 permissions:
   contents: read
@@ -19,11 +23,14 @@ env:
   UPSTREAM_REPOSITORY: cheaper-inference/OmniRoute
   UPSTREAM_COMMIT: 5dbd2eb6880f9e7bd1962c44df5710cf46f52096
   EXPECTED_UPSTREAM_VERSION: '3.8.53'
+  ABUKHALED_PRODUCT_NAME: 'ABUKHALED AI'
 
 jobs:
   windows-build:
+    name: Build and verify ABUKHALED AI
     runs-on: windows-latest
     timeout-minutes: 150
+
     steps:
       - name: Check out ABUKHALED AI integration
         uses: actions/checkout@v5
@@ -40,32 +47,47 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Verify immutable source, package versions and lockfiles
+      - name: Verify immutable source and versions
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
           $sha = (git -C upstream rev-parse HEAD).Trim().ToLowerInvariant()
+
           if ($sha -ne $env:UPSTREAM_COMMIT) {
             throw "Pinned source mismatch. Expected $env:UPSTREAM_COMMIT, got $sha"
           }
+
           $root = Get-Content upstream/package.json -Raw | ConvertFrom-Json
           $electron = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
+
           if ($root.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
-            throw "Unexpected root version $($root.version)"
+            throw "Unexpected root version: $($root.version)"
           }
+
           if ($electron.version -ne $root.version) {
-            throw "Root/Electron version mismatch: $($root.version) / $($electron.version)"
+            throw "Root/Electron version mismatch."
           }
-          foreach ($lock in @('upstream/package-lock.json', 'upstream/electron/package-lock.json')) {
-            if (-not (Test-Path $lock)) { throw "Missing lockfile: $lock" }
+
+          foreach ($lock in @(
+            'upstream/package-lock.json',
+            'upstream/electron/package-lock.json'
+          )) {
+            if (-not (Test-Path $lock)) {
+              throw "Missing lockfile: $lock"
+            }
           }
+
           @(
             "Repository: $env:UPSTREAM_REPOSITORY"
             "Pinned commit: $sha"
             "Root version: $($root.version)"
             "Electron version: $($electron.version)"
+            "ABUKHALED integration commit: $env:GITHUB_SHA"
+            "GitHub run: $env:GITHUB_RUN_NUMBER"
             "Runner: $env:RUNNER_OS / $env:RUNNER_ARCH"
           ) | Set-Content upstream-revision.txt
+
           "UPSTREAM_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Set up Node.js
@@ -77,106 +99,221 @@ jobs:
             upstream/package-lock.json
             upstream/electron/package-lock.json
 
-      - name: Record toolchain
+      - name: Record build environment
         shell: pwsh
         run: |
           node --version
           npm --version
           git --version
 
-
-      - name: Install root dependencies from lockfile
+      - name: Install root dependencies
         working-directory: upstream
         shell: pwsh
         run: npm ci --no-audit --no-fund
 
-      - name: Install Electron dependencies from lockfile
+      - name: Install Electron dependencies
         working-directory: upstream
         shell: pwsh
         run: npm ci --prefix electron --no-audit --no-fund
 
-      - name: Apply ABUKHALED desktop identity and updater isolation
-        shell: pwsh
-        run: |
-          node abukhaled/scripts/apply-branding.mjs upstream
-
-      - name: Build Windows app without publishing
-        working-directory: upstream
-        shell: pwsh
-        run: |
-          npm run electron:build:win
-
-      - name: Verify branded package and collect outputs
+      - name: Apply ABUKHALED AI branding
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          node abukhaled/scripts/apply-branding.mjs upstream
+
+      - name: Verify ABUKHALED branding before build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $pkg = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
+          $main = Get-Content upstream/electron/main.js -Raw
+
+          if ($pkg.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
+            throw 'Application version changed unexpectedly.'
+          }
+
+          if ($pkg.build.productName -ne $env:ABUKHALED_PRODUCT_NAME) {
+            throw 'ABUKHALED product name was not applied.'
+          }
+
+          if ($pkg.build.appId -ne 'online.omniroute.desktop') {
+            throw 'Original appId was not preserved.'
+          }
+
+          if ($pkg.build.PSObject.Properties.Name -contains 'publish') {
+            throw 'Upstream publishing configuration is still present.'
+          }
+
+          $requiredMarkers = @(
+            'title: "ABUKHALED AI",'
+            'label: "Open ABUKHALED AI",'
+            'tray.setToolTip("ABUKHALED AI");'
+            'Upstream auto-updates are disabled'
+            'Upstream update downloads are disabled'
+            'Upstream update installation is disabled'
+          )
+
+          foreach ($marker in $requiredMarkers) {
+            if (-not $main.Contains($marker)) {
+              throw "Branding verification failed. Missing: $marker"
+            }
+          }
+
+          foreach ($asset in @('icon.ico', 'icon.png', 'tray-icon.png')) {
+            if (-not (Test-Path "upstream/electron/assets/$asset")) {
+              throw "Missing branded icon: $asset"
+            }
+          }
+
+          Write-Host 'ABUKHALED AI branding verified.'
+          Write-Host "Product: $($pkg.build.productName)"
+          Write-Host "Version: $($pkg.version)"
+          Write-Host "App ID preserved: $($pkg.build.appId)"
+
+      - name: Build ABUKHALED AI for Windows
+        working-directory: upstream
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run electron:build:win
+
+      - name: Verify Windows build outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
           $output = Join-Path (Resolve-Path upstream).Path 'electron\dist-electron'
-          if (-not (Test-Path $output)) { throw "Missing build output: $output" }
+
+          if (-not (Test-Path $output)) {
+            throw "Missing build output: $output"
+          }
 
           $files = @(Get-ChildItem -Path $output -File -Filter '*.exe')
+
           if ($files.Count -lt 2) {
             Get-ChildItem -Path $output -Force | Select-Object Name, Length
-            throw 'Expected both portable and installer EXE outputs.'
+            throw 'Expected portable and installer EXE outputs.'
           }
-          $branded = @($files | Where-Object { $_.Name -match '(?i)ABUKHALED' })
+
+          $branded = @(
+            $files | Where-Object {
+              $_.Name -match '(?i)ABUKHALED'
+            }
+          )
+
           if ($branded.Count -lt 2) {
             $files | Select-Object Name, Length
-            throw 'Build produced EXEs, but expected ABUKHALED-branded filenames were not found.'
+            throw 'Expected ABUKHALED-branded executable files.'
           }
-          $setup = @($branded | Where-Object { $_.Name -match '(?i)setup.*\.exe$|\.setup\.' })
-          if ($setup.Count -eq 0) { throw 'No ABUKHALED Setup installer found.' }
+
+          $setup = @(
+            $branded | Where-Object {
+              $_.Name -match '(?i)setup.*\.exe$|\.setup\.'
+            }
+          )
+
+          if ($setup.Count -eq 0) {
+            throw 'ABUKHALED Setup installer was not found.'
+          }
 
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
           foreach ($file in $branded) {
             Copy-Item -LiteralPath $file.FullName -Destination (Join-Path artifacts $file.Name) -Force
           }
+
           Copy-Item upstream-revision.txt artifacts/upstream-revision.txt -Force
+
+          Write-Host 'Verified Windows packages:'
           Get-ChildItem artifacts -File | Select-Object Name, Length
 
-      - name: Smoke-test packaged Electron app
+      - name: Smoke-test packaged ABUKHALED AI
         working-directory: upstream
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # Branding changes electron-builder's executable name from OmniRoute.exe.
-          # The upstream smoke script supports an explicit executable override.
-          $unpacked = (Resolve-Path 'electron\dist-electron\win-unpacked').Path
+
+          $unpacked = Join-Path (Resolve-Path 'electron\dist-electron').Path 'win-unpacked'
+
           if (-not (Test-Path $unpacked)) {
-            throw "Packaged app directory not found: $unpacked"
+            throw "Packaged application directory not found: $unpacked"
           }
-          $appExecutables = @(Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' |
-            Where-Object { $_.Name -notmatch '^(?i:unins|uninstall)' })
+
+          $appExecutables = @(
+            Get-ChildItem -LiteralPath $unpacked -File -Filter '*.exe' |
+              Where-Object {
+                $_.Name -notmatch '^(?i:unins|uninstall)'
+              }
+          )
+
           if ($appExecutables.Count -ne 1) {
             Get-ChildItem -LiteralPath $unpacked -Force | Select-Object Name, Length
-            throw "Expected exactly one packaged application executable in $unpacked; found $($appExecutables.Count)."
+            throw "Expected exactly one application executable; found $($appExecutables.Count)."
           }
+
           $env:ELECTRON_SMOKE_APP_EXECUTABLE = $appExecutables[0].FullName
-          Write-Host "[ABUKHALED smoke] Testing executable: $env:ELECTRON_SMOKE_APP_EXECUTABLE"
+
+          Write-Host "Testing: $env:ELECTRON_SMOKE_APP_EXECUTABLE"
+
           npm run electron:smoke:packaged
 
-      - name: Verify packaged metadata
+      - name: Verify final package metadata
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+
           $pkg = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
-          if ($pkg.build.productName -ne 'ABUKHALED AI') { throw 'Packaged productName is not ABUKHALED AI.' }
-          if ($pkg.build.appId -ne 'online.omniroute.desktop') { throw 'The migration-safe appId changed unexpectedly.' }
-          if ($null -ne $pkg.build.publish) { throw 'Upstream publish target must remain removed.' }
+
+          if ($pkg.build.productName -ne 'ABUKHALED AI') {
+            throw 'Final product name verification failed.'
+          }
+
+          if ($pkg.build.appId -ne 'online.omniroute.desktop') {
+            throw 'Original application identity was changed.'
+          }
+
+          if ($pkg.build.PSObject.Properties.Name -contains 'publish') {
+            throw 'Unexpected upstream publishing configuration.'
+          }
+
+          Write-Host 'Final package metadata verified.'
 
       - name: Generate SHA-256 manifest
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
           $lines = Get-ChildItem artifacts -File | ForEach-Object {
             $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
           }
+
           $lines | Set-Content artifacts/SHA256SUMS.txt
+
           Get-Content artifacts/SHA256SUMS.txt
 
-      - name: Upload verified build evidence
+      - name: Record ABUKHALED build identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          @(
+            'Product: ABUKHALED AI'
+            "Upstream version: $env:EXPECTED_UPSTREAM_VERSION"
+            "Upstream commit: $env:UPSTREAM_SHA"
+            "Integration commit: $env:GITHUB_SHA"
+            "GitHub run number: $env:GITHUB_RUN_NUMBER"
+            "GitHub run ID: $env:GITHUB_RUN_ID"
+            'Branding verification: PASSED'
+            'Packaged smoke test: PASSED'
+          ) | Set-Content artifacts/ABUKHALED-BUILD-INFO.txt
+
+      - name: Upload verified ABUKHALED AI build
         uses: actions/upload-artifact@v6
         with:
-          name: abukhaled-ai-windows-${{ github.run_number }}
+          name: ABUKHALED-AI-Windows-${{ github.run_number }}-${{ github.sha }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
