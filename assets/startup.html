@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>ABUKHALED AI</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Segoe UI", Tahoma, Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      display: grid; place-items: center; color: #f4f6fb;
+      background:
+        radial-gradient(ellipse at 16% 18%, rgba(23, 118, 166, .25), transparent 42%),
+        radial-gradient(ellipse at 84% 78%, rgba(115, 66, 181, .24), transparent 43%),
+        radial-gradient(ellipse at 50% 50%, rgba(25, 48, 82, .32), transparent 65%),
+        #080d17;
+    }
+    .glow { position: absolute; width: 440px; height: 440px; border-radius: 50%; filter: blur(90px); opacity: .16; pointer-events: none; background: #168eb6; transform: translate(-36%, -28%); }
+    .panel { position: relative; width: min(440px, calc(100vw - 48px)); padding: 42px 34px 36px; text-align: center; border: 1px solid rgba(172, 198, 232, .13); border-radius: 26px; background: linear-gradient(145deg, rgba(20, 31, 50, .86), rgba(11, 17, 30, .78)); box-shadow: 0 24px 90px rgba(0,0,0,.38), inset 0 1px rgba(255,255,255,.04); }
+    .mark { width: 76px; height: 76px; object-fit: contain; margin: 0 auto 21px; filter: drop-shadow(0 8px 22px rgba(32, 166, 204, .22)); }
+    h1 { margin: 0; font-size: 25px; letter-spacing: .2px; font-weight: 650; }
+    .tag { margin: 9px 0 28px; color: #9fb1c9; font-size: 13px; letter-spacing: .45px; direction: ltr; }
+    .status { margin: 0 0 17px; color: #dce7f5; font-size: 14px; }
+    .status-en { display: block; margin-top: 5px; color: #8294ad; font-size: 12px; direction: ltr; }
+    .track { width: 100%; height: 4px; overflow: hidden; border-radius: 8px; background: rgba(166, 188, 220, .13); }
+    .bar { width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #36c4d8, #6388ef, #a17be9); animation: travel 1.8s ease-in-out infinite; }
+    .foot { margin-top: 22px; color: #64758e; font-size: 11px; letter-spacing: .3px; direction: ltr; }
+    @keyframes travel { 0% { transform: translateX(-115%); } 100% { transform: translateX(290%); } }
+    @media (prefers-reduced-motion: reduce) { .bar { animation: none; width: 55%; margin-inline-start: 22%; } }
+  </style>
+</head>
+<body>
+  <div class="glow" aria-hidden="true"></div>
+  <main class="panel" aria-live="polite">
+    <img class="mark" src="icon.png" alt="ABUKHALED AI">
+    <h1>ABUKHALED AI</h1>
+    <p class="tag">Your AI workspace</p>
+    <p class="status">جارٍ تجهيز مساحة العمل<span class="status-en">Preparing your workspace</span></p>
+    <div class="track" role="progressbar" aria-label="Loading" aria-valuetext="Preparing"><div class="bar"></div></div>
+    <div class="foot">SECURE · CONNECTED · READY</div>
+  </main>
+</body>
+</html>
