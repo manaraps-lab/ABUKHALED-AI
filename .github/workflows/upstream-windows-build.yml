@@ -151,7 +151,7 @@ jobs:
             'label: "Open ABUKHALED AI",'
             'tray.setToolTip("ABUKHALED AI");'
             'Upstream auto-updates are disabled'
-            'Upstream update downloads are disabled'
+            'ABUKHALED AI update downloads are not configured'
             'Upstream update installation is disabled'
           )
 
