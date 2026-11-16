@@ -100,22 +100,28 @@ function replaceFunction(source, name, replacement, isAsync = false) {
   fail(`Could not find the closing brace of ${name}`);
 }
 
-function updateHomeDescription(value) {
-  if (Array.isArray(value)) return value.map(updateHomeDescription);
-  if (!value || typeof value !== 'object') return value;
-  for (const key of Object.keys(value)) {
-    const current = value[key];
-    if (key === 'homeDescription' && typeof current === 'string') {
-      if (current === 'مرحبًا بك في OmniRoute') value[key] = 'مرحبًا بك في ABUKHALED AI';
-      else if (current === 'Welcome to OmniRoute') value[key] = 'Welcome to ABUKHALED AI';
-      else if (current !== 'مرحبًا بك في ABUKHALED AI' && current !== 'Welcome to ABUKHALED AI') {
-        fail(`Unexpected homeDescription value; refusing a broad translation rewrite: ${current}`);
-      }
-    } else if (current && typeof current === 'object') {
-      value[key] = updateHomeDescription(current);
-    }
+function updateHomeDescription(messages, locale) {
+  if (!messages || typeof messages !== 'object' || Array.isArray(messages)) {
+    fail(`Invalid translation root for ${locale}`);
   }
-  return value;
+  if (!messages.header || typeof messages.header !== 'object' || Array.isArray(messages.header)) {
+    fail(`Missing header translation section for ${locale}`);
+  }
+  if (typeof messages.header.homeDescription !== 'string') {
+    fail(`Missing header.homeDescription translation for ${locale}`);
+  }
+
+  const expected = locale === 'ar.json' ? 'مرحبًا بك في OmniRoute' : 'Welcome to OmniRoute';
+  const branded = locale === 'ar.json' ? 'مرحبًا بك في ABUKHALED AI' : 'Welcome to ABUKHALED AI';
+  const current = messages.header.homeDescription;
+  if (current === branded) return messages;
+  if (current !== expected) {
+    fail(`Unexpected header.homeDescription value in ${locale}: ${current}`);
+  }
+
+  // Change only the exact welcome label. All other translation keys are preserved.
+  messages.header.homeDescription = branded;
+  return messages;
 }
 
 // Verify the immutable upstream baseline before changing anything.
@@ -437,10 +443,12 @@ const messageFiles = ['ar.json', 'en.json'];
 for (const filename of messageFiles) {
   if (!fs.existsSync(path.join(messagesDir, filename))) fail(`Required translation file not found: ${filename}`);
 }
+const translationBaselines = new Map();
 for (const filename of messageFiles) {
   const file = path.join(messagesDir, filename);
   const messages = JSON.parse(read(file));
-  const updated = updateHomeDescription(messages);
+  translationBaselines.set(filename, JSON.parse(JSON.stringify(messages)));
+  const updated = updateHomeDescription(messages, filename);
   write(file, `${JSON.stringify(updated, null, 2)}\n`);
 }
 
@@ -496,19 +504,17 @@ if (finalHeader.includes('ProductSwitcher') || finalHeader.includes('KEAK_PRODUC
 if (!finalHeader.includes('ABUKHALED AI')) fail('Dashboard header brand verification failed');
 if (!finalLogo.includes('/abukhaled-icon.png')) fail('ABUKHALED logo asset is not wired into the logo component');
 if (!fs.existsSync(path.join(publicDir, 'abukhaled-icon.png'))) fail('Dashboard icon was not copied');
-for (const locale of ['ar.json', 'en.json']) {
+for (const locale of messageFiles) {
   const messages = JSON.parse(read(path.join(messagesDir, locale)));
-  let homeDescription = null;
-  const visit = (value) => {
-    if (!value || typeof value !== 'object') return;
-    for (const [key, child] of Object.entries(value)) {
-      if (key === 'homeDescription') homeDescription = child;
-      else visit(child);
-    }
-  };
-  visit(messages);
-  if (homeDescription !== (locale === 'ar.json' ? 'مرحبًا بك في ABUKHALED AI' : 'Welcome to ABUKHALED AI')) {
+  const baseline = translationBaselines.get(locale);
+  const expectedWelcome = locale === 'ar.json' ? 'مرحبًا بك في ABUKHALED AI' : 'Welcome to ABUKHALED AI';
+  if (!messages.header || messages.header.homeDescription !== expectedWelcome) {
     fail(`Welcome translation verification failed for ${locale}`);
+  }
+  const expectedMessages = JSON.parse(JSON.stringify(baseline));
+  expectedMessages.header.homeDescription = expectedWelcome;
+  if (JSON.stringify(messages) !== JSON.stringify(expectedMessages)) {
+    fail(`Unexpected translation changes detected outside header.homeDescription in ${locale}`);
   }
 }
 console.log('[ABUKHALED branding] Identity, renderer recovery and packaged smoke checks applied.');
