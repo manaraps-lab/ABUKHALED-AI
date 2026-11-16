@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/upstream-windows-build.yml'
       - 'scripts/apply-branding.mjs'
+      - 'scripts/patch-server-readiness.mjs'
       - 'assets/**'
 
 permissions:
@@ -53,7 +54,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $sha = (git -C upstream rev-parse HEAD).Trim().ToLowerInvariant()
-
           if ($sha -ne $env:UPSTREAM_COMMIT) {
             throw "Pinned source mismatch. Expected $env:UPSTREAM_COMMIT, got $sha"
           }
@@ -64,7 +64,6 @@ jobs:
           if ($root.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw "Unexpected root version: $($root.version)"
           }
-
           if ($electron.version -ne $root.version) {
             throw "Root/Electron version mismatch."
           }
@@ -122,18 +121,24 @@ jobs:
           $ErrorActionPreference = 'Stop'
           node abukhaled/scripts/apply-branding.mjs upstream
 
-      - name: Verify ABUKHALED branding before build
+      - name: Patch Electron lifecycle readiness probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node abukhaled/scripts/patch-server-readiness.mjs upstream
+
+      - name: Verify ABUKHALED branding and startup readiness
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
           $pkg = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
           $main = Get-Content upstream/electron/main.js -Raw
+          $readiness = Get-Content upstream/electron/lib/serverReadiness.js -Raw
 
           if ($pkg.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw 'Application version changed unexpectedly.'
           }
-
           if ($pkg.build.productName -ne $env:ABUKHALED_PRODUCT_NAME) {
             throw 'ABUKHALED product name was not applied.'
           }
@@ -161,6 +166,14 @@ jobs:
             }
           }
 
+          if (-not $readiness.Contains('/healthz')) {
+            throw 'Electron startup readiness probe was not changed to /healthz.'
+          }
+
+          if ($readiness.Contains('/api/health/ping')) {
+            throw 'Electron still uses the liveness endpoint for startup readiness.'
+          }
+
           foreach ($asset in @('icon.ico', 'icon.png', 'tray-icon.png')) {
             if (-not (Test-Path "upstream/electron/assets/$asset")) {
               throw "Missing branded icon: $asset"
@@ -168,6 +181,7 @@ jobs:
           }
 
           Write-Host 'ABUKHALED AI branding verified.'
+          Write-Host 'Electron startup readiness probe verified.'
           Write-Host "Product: $($pkg.build.productName)"
           Write-Host "Version: $($pkg.version)"
           Write-Host "App ID preserved: $($pkg.build.appId)"
@@ -191,7 +205,6 @@ jobs:
           }
 
           $files = @(Get-ChildItem -Path $output -File -Filter '*.exe')
-
           if ($files.Count -lt 2) {
             Get-ChildItem -Path $output -Force | Select-Object Name, Length
             throw 'Expected portable and installer EXE outputs.'
@@ -236,7 +249,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $unpacked = Join-Path (Resolve-Path 'electron\dist-electron').Path 'win-unpacked'
-
           if (-not (Test-Path $unpacked)) {
             throw "Packaged application directory not found: $unpacked"
           }
@@ -307,6 +319,7 @@ jobs:
             "GitHub run number: $env:GITHUB_RUN_NUMBER"
             "GitHub run ID: $env:GITHUB_RUN_ID"
             'Branding verification: PASSED'
+            'Startup readiness verification: PASSED'
             'Packaged smoke test: PASSED'
           ) | Set-Content artifacts/ABUKHALED-BUILD-INFO.txt
 
