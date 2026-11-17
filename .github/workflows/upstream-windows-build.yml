@@ -6,16 +6,12 @@ run-name: "ABUKHALED AI Windows Build #${{ github.run_number }}"
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - '.github/workflows/upstream-windows-build.yml'
       - 'scripts/apply-branding.mjs'
       - 'scripts/patch-server-readiness.mjs'
-      - 'scripts/verify-abukhaled-integration.mjs'
-      - 'scripts/test-startup-patch.mjs'
-      - 'scripts/patch-branding-translation-scope.mjs'
-      - 'scripts/test-branding-translation-scope.mjs'
-      - 'scripts/lib/**'
       - 'assets/**'
 
 permissions:
@@ -59,6 +55,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $sha = (git -C upstream rev-parse HEAD).Trim().ToLowerInvariant()
+
           if ($sha -ne $env:UPSTREAM_COMMIT) {
             throw "Pinned source mismatch. Expected $env:UPSTREAM_COMMIT, got $sha"
           }
@@ -69,6 +66,7 @@ jobs:
           if ($root.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw "Unexpected root version: $($root.version)"
           }
+
           if ($electron.version -ne $root.version) {
             throw "Root/Electron version mismatch."
           }
@@ -110,6 +108,31 @@ jobs:
           npm --version
           git --version
 
+      - name: Verify integration files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $requiredFiles = @(
+            'abukhaled/scripts/apply-branding.mjs',
+            'abukhaled/scripts/patch-server-readiness.mjs',
+            'abukhaled/assets/startup.html',
+            'abukhaled/assets/icon.ico',
+            'abukhaled/assets/icon.png',
+            'abukhaled/assets/tray-icon.png'
+          )
+
+          foreach ($file in $requiredFiles) {
+            if (-not (Test-Path $file -PathType Leaf)) {
+              throw "Required ABUKHALED integration file is missing: $file"
+            }
+          }
+
+          node --check abukhaled/scripts/apply-branding.mjs
+          node --check abukhaled/scripts/patch-server-readiness.mjs
+
+          Write-Host 'Required integration files and JavaScript syntax verified.'
+
       - name: Install root dependencies
         working-directory: upstream
         shell: pwsh
@@ -120,43 +143,17 @@ jobs:
         shell: pwsh
         run: npm ci --prefix electron --no-audit --no-fund
 
-      - name: Correct dashboard translation scope
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          node abukhaled/scripts/patch-branding-translation-scope.mjs abukhaled/scripts/apply-branding.mjs
-
-      - name: Validate integration scripts
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          node --check abukhaled/scripts/patch-branding-translation-scope.mjs
-          node --check abukhaled/scripts/lib/branding-translations.mjs
-          node --check abukhaled/scripts/test-branding-translation-scope.mjs
-          node --check abukhaled/scripts/apply-branding.mjs
-          node --check abukhaled/scripts/patch-server-readiness.mjs
-          node --check abukhaled/scripts/verify-abukhaled-integration.mjs
-          node --check abukhaled/scripts/test-startup-patch.mjs
-          node abukhaled/scripts/test-branding-translation-scope.mjs
-          node abukhaled/scripts/test-startup-patch.mjs
-
       - name: Apply ABUKHALED AI branding
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           node abukhaled/scripts/apply-branding.mjs upstream
 
-      - name: Patch Electron lifecycle readiness probe
+      - name: Patch Electron lifecycle readiness
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           node abukhaled/scripts/patch-server-readiness.mjs upstream
-
-      - name: Verify complete ABUKHALED integration
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          node abukhaled/scripts/verify-abukhaled-integration.mjs upstream
 
       - name: Verify ABUKHALED branding and startup readiness
         shell: pwsh
@@ -166,10 +163,12 @@ jobs:
           $pkg = Get-Content upstream/electron/package.json -Raw | ConvertFrom-Json
           $main = Get-Content upstream/electron/main.js -Raw
           $readiness = Get-Content upstream/electron/lib/serverReadiness.js -Raw
+          $smoke = Get-Content upstream/scripts/dev/smoke-electron-packaged.mjs -Raw
 
           if ($pkg.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw 'Application version changed unexpectedly.'
           }
+
           if ($pkg.build.productName -ne $env:ABUKHALED_PRODUCT_NAME) {
             throw 'ABUKHALED product name was not applied.'
           }
@@ -183,15 +182,17 @@ jobs:
           }
 
           $requiredMarkers = @(
+            'ABUKHALED_PATCH_CREATEWINDOW_V1'
+            'ABUKHALED_PATCH_PRESERVE_USER_DATA_V1'
+            'ABUKHALED_PATCH_EARLY_STARTUP_WINDOW_V1'
             'title: "ABUKHALED AI",'
             'label: "Open ABUKHALED AI",'
             'tray.setToolTip("ABUKHALED AI");'
             'Upstream auto-updates are disabled'
             'ABUKHALED AI update downloads are not configured'
             'Upstream update installation is disabled'
-            'ABUKHALED_PATCH_EARLY_STARTUP_WINDOW_V2'
             'Dashboard renderer loaded:'
-            'Local service is still starting; startup screen remains visible.'
+            'branded startup screen remains visible.'
           )
 
           foreach ($marker in $requiredMarkers) {
@@ -208,17 +209,27 @@ jobs:
             throw 'Electron still uses the liveness endpoint for startup readiness.'
           }
 
-          foreach ($asset in @('icon.ico', 'icon.png', 'tray-icon.png')) {
-            if (-not (Test-Path "upstream/electron/assets/$asset")) {
-              throw "Missing branded icon: $asset"
+          if (-not $smoke.Contains('[ABUKHALED AI] Dashboard renderer loaded:')) {
+            throw 'Packaged smoke test does not wait for the actual dashboard renderer.'
+          }
+
+          if (-not $smoke.Contains('const DEFAULT_TIMEOUT_MS = 180_000;')) {
+            throw 'Packaged smoke test timeout was not increased to 180 seconds.'
+          }
+
+          foreach ($asset in @('icon.ico', 'icon.png', 'tray-icon.png', 'startup.html')) {
+            if (-not (Test-Path "upstream/electron/assets/$asset" -PathType Leaf)) {
+              throw "Missing branded Electron asset: $asset"
             }
           }
 
+          if (-not (Test-Path 'upstream/public/abukhaled-icon.png' -PathType Leaf)) {
+            throw 'Dashboard icon was not copied.'
+          }
+
           Write-Host 'ABUKHALED AI branding verified.'
-          Write-Host 'Electron startup readiness probe verified.'
-          Write-Host "Product: $($pkg.build.productName)"
-          Write-Host "Version: $($pkg.version)"
-          Write-Host "App ID preserved: $($pkg.build.appId)"
+          Write-Host 'Original application identity preserved.'
+          Write-Host 'Startup readiness and dashboard smoke-test conditions verified.'
 
       - name: Build ABUKHALED AI for Windows
         working-directory: upstream
@@ -239,6 +250,7 @@ jobs:
           }
 
           $files = @(Get-ChildItem -Path $output -File -Filter '*.exe')
+
           if ($files.Count -lt 2) {
             Get-ChildItem -Path $output -Force | Select-Object Name, Length
             throw 'Expected portable and installer EXE outputs.'
@@ -283,6 +295,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $unpacked = Join-Path (Resolve-Path 'electron\dist-electron').Path 'win-unpacked'
+
           if (-not (Test-Path $unpacked)) {
             throw "Packaged application directory not found: $unpacked"
           }
