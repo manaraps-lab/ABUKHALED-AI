@@ -1,7 +1,7 @@
 
 name: ABUKHALED AI - Branded Windows Build
 
-run-name: ABUKHALED AI Windows Build #${{ github.run_number }}
+run-name: "ABUKHALED AI Windows Build #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -11,6 +11,11 @@ on:
       - '.github/workflows/upstream-windows-build.yml'
       - 'scripts/apply-branding.mjs'
       - 'scripts/patch-server-readiness.mjs'
+      - 'scripts/verify-abukhaled-integration.mjs'
+      - 'scripts/test-startup-patch.mjs'
+      - 'scripts/patch-branding-translation-scope.mjs'
+      - 'scripts/test-branding-translation-scope.mjs'
+      - 'scripts/lib/**'
       - 'assets/**'
 
 permissions:
@@ -115,6 +120,26 @@ jobs:
         shell: pwsh
         run: npm ci --prefix electron --no-audit --no-fund
 
+      - name: Correct dashboard translation scope
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node abukhaled/scripts/patch-branding-translation-scope.mjs abukhaled/scripts/apply-branding.mjs
+
+      - name: Validate integration scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --check abukhaled/scripts/patch-branding-translation-scope.mjs
+          node --check abukhaled/scripts/lib/branding-translations.mjs
+          node --check abukhaled/scripts/test-branding-translation-scope.mjs
+          node --check abukhaled/scripts/apply-branding.mjs
+          node --check abukhaled/scripts/patch-server-readiness.mjs
+          node --check abukhaled/scripts/verify-abukhaled-integration.mjs
+          node --check abukhaled/scripts/test-startup-patch.mjs
+          node abukhaled/scripts/test-branding-translation-scope.mjs
+          node abukhaled/scripts/test-startup-patch.mjs
+
       - name: Apply ABUKHALED AI branding
         shell: pwsh
         run: |
@@ -126,6 +151,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           node abukhaled/scripts/patch-server-readiness.mjs upstream
+
+      - name: Verify complete ABUKHALED integration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node abukhaled/scripts/verify-abukhaled-integration.mjs upstream
 
       - name: Verify ABUKHALED branding and startup readiness
         shell: pwsh
@@ -158,6 +189,9 @@ jobs:
             'Upstream auto-updates are disabled'
             'ABUKHALED AI update downloads are not configured'
             'Upstream update installation is disabled'
+            'ABUKHALED_PATCH_EARLY_STARTUP_WINDOW_V2'
+            'Dashboard renderer loaded:'
+            'Local service is still starting; startup screen remains visible.'
           )
 
           foreach ($marker in $requiredMarkers) {
@@ -292,20 +326,6 @@ jobs:
 
           Write-Host 'Final package metadata verified.'
 
-      - name: Generate SHA-256 manifest
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $lines = Get-ChildItem artifacts -File | ForEach-Object {
-            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)"
-          }
-
-          $lines | Set-Content artifacts/SHA256SUMS.txt
-
-          Get-Content artifacts/SHA256SUMS.txt
-
       - name: Record ABUKHALED build identity
         shell: pwsh
         run: |
@@ -322,6 +342,20 @@ jobs:
             'Startup readiness verification: PASSED'
             'Packaged smoke test: PASSED'
           ) | Set-Content artifacts/ABUKHALED-BUILD-INFO.txt
+
+      - name: Generate SHA-256 manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $lines = Get-ChildItem artifacts -File | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+
+          $lines | Set-Content artifacts/SHA256SUMS.txt
+
+          Get-Content artifacts/SHA256SUMS.txt
 
       - name: Upload verified ABUKHALED AI build
         uses: actions/upload-artifact@v6
