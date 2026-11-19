@@ -173,7 +173,7 @@ jobs:
           $main = Get-Content upstream/electron/main.js -Raw
           $readiness = Get-Content upstream/electron/lib/serverReadiness.js -Raw
           $smoke = Get-Content upstream/scripts/dev/smoke-electron-packaged.mjs -Raw
-          $home = Get-Content 'upstream/src/app/(dashboard)/home/page.tsx' -Raw
+          $homePageContent = Get-Content 'upstream/src/app/(dashboard)/home/page.tsx' -Raw
 
           if ($pkg.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw 'Application version changed unexpectedly.'
@@ -219,32 +219,6 @@ jobs:
             throw 'Electron still uses the liveness endpoint for startup readiness.'
           }
 
-          if (-not $home.Contains('ABUKHALED_HOME_CLEANUP_V1')) {
-            throw 'ABUKHALED home-page cleanup marker is missing.'
-          }
-
-          foreach ($promotion in @(
-            'KimiSponsorBanner',
-            'CheaperInferenceSponsorBanner',
-            'VscodeCopilotBanner',
-            'NewsBanner'
-          )) {
-            if ($home.Contains($promotion)) {
-              throw "Promotional component remains on the home page: $promotion"
-            }
-          }
-
-          foreach ($requiredHomeComponent in @(
-            'BootstrapBanner',
-            'FirstRunReadinessCard',
-            'UnpricedUsageBanner',
-            'HomePageClient'
-          )) {
-            if (-not $home.Contains($requiredHomeComponent)) {
-              throw "Required home-page component is missing: $requiredHomeComponent"
-            }
-          }
-
           if (-not $smoke.Contains('[ABUKHALED AI] Dashboard renderer loaded:')) {
             throw 'Packaged smoke test does not wait for the actual dashboard renderer.'
           }
@@ -263,10 +237,36 @@ jobs:
             throw 'Dashboard icon was not copied.'
           }
 
+          if (-not $homePageContent.Contains('ABUKHALED_HOME_CLEANUP_V1')) {
+            throw 'ABUKHALED home-page cleanup marker is missing.'
+          }
+
+          foreach ($promotion in @(
+            'KimiSponsorBanner',
+            'CheaperInferenceSponsorBanner',
+            'VscodeCopilotBanner',
+            'NewsBanner'
+          )) {
+            if ($homePageContent.Contains($promotion)) {
+              throw "Promotional component remains on the home page: $promotion"
+            }
+          }
+
+          foreach ($requiredHomeComponent in @(
+            'BootstrapBanner',
+            'FirstRunReadinessCard',
+            'UnpricedUsageBanner',
+            'HomePageClient'
+          )) {
+            if (-not $homePageContent.Contains($requiredHomeComponent)) {
+              throw "Required home-page component is missing: $requiredHomeComponent"
+            }
+          }
+
           Write-Host 'ABUKHALED AI branding verified.'
           Write-Host 'Original application identity preserved.'
-          Write-Host 'Home-page cleanup verified.'
           Write-Host 'Startup readiness and dashboard smoke-test conditions verified.'
+          Write-Host 'Home-page cleanup verified; essential dashboard components preserved.'
 
       - name: Build ABUKHALED AI for Windows
         working-directory: upstream
@@ -389,8 +389,8 @@ jobs:
             "GitHub run number: $env:GITHUB_RUN_NUMBER"
             "GitHub run ID: $env:GITHUB_RUN_ID"
             'Branding verification: PASSED'
-            'Home-page cleanup verification: PASSED'
             'Startup readiness verification: PASSED'
+            'Home-page cleanup verification: PASSED'
             'Packaged smoke test: PASSED'
           ) | Set-Content artifacts/ABUKHALED-BUILD-INFO.txt
 
