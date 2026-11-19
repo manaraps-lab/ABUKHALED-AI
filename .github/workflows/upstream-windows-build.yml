@@ -12,6 +12,7 @@ on:
       - '.github/workflows/upstream-windows-build.yml'
       - 'scripts/apply-branding.mjs'
       - 'scripts/patch-server-readiness.mjs'
+      - 'scripts/patch-home-page.mjs'
       - 'assets/**'
 
 permissions:
@@ -116,6 +117,7 @@ jobs:
           $requiredFiles = @(
             'abukhaled/scripts/apply-branding.mjs',
             'abukhaled/scripts/patch-server-readiness.mjs',
+            'abukhaled/scripts/patch-home-page.mjs',
             'abukhaled/assets/startup.html',
             'abukhaled/assets/icon.ico',
             'abukhaled/assets/icon.png',
@@ -130,6 +132,7 @@ jobs:
 
           node --check abukhaled/scripts/apply-branding.mjs
           node --check abukhaled/scripts/patch-server-readiness.mjs
+          node --check abukhaled/scripts/patch-home-page.mjs
 
           Write-Host 'Required integration files and JavaScript syntax verified.'
 
@@ -149,6 +152,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           node abukhaled/scripts/apply-branding.mjs upstream
 
+      - name: Simplify ABUKHALED home page
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node abukhaled/scripts/patch-home-page.mjs upstream
+
       - name: Patch Electron lifecycle readiness
         shell: pwsh
         run: |
@@ -164,6 +173,7 @@ jobs:
           $main = Get-Content upstream/electron/main.js -Raw
           $readiness = Get-Content upstream/electron/lib/serverReadiness.js -Raw
           $smoke = Get-Content upstream/scripts/dev/smoke-electron-packaged.mjs -Raw
+          $home = Get-Content 'upstream/src/app/(dashboard)/home/page.tsx' -Raw
 
           if ($pkg.version -ne $env:EXPECTED_UPSTREAM_VERSION) {
             throw 'Application version changed unexpectedly.'
@@ -209,6 +219,32 @@ jobs:
             throw 'Electron still uses the liveness endpoint for startup readiness.'
           }
 
+          if (-not $home.Contains('ABUKHALED_HOME_CLEANUP_V1')) {
+            throw 'ABUKHALED home-page cleanup marker is missing.'
+          }
+
+          foreach ($promotion in @(
+            'KimiSponsorBanner',
+            'CheaperInferenceSponsorBanner',
+            'VscodeCopilotBanner',
+            'NewsBanner'
+          )) {
+            if ($home.Contains($promotion)) {
+              throw "Promotional component remains on the home page: $promotion"
+            }
+          }
+
+          foreach ($requiredHomeComponent in @(
+            'BootstrapBanner',
+            'FirstRunReadinessCard',
+            'UnpricedUsageBanner',
+            'HomePageClient'
+          )) {
+            if (-not $home.Contains($requiredHomeComponent)) {
+              throw "Required home-page component is missing: $requiredHomeComponent"
+            }
+          }
+
           if (-not $smoke.Contains('[ABUKHALED AI] Dashboard renderer loaded:')) {
             throw 'Packaged smoke test does not wait for the actual dashboard renderer.'
           }
@@ -229,6 +265,7 @@ jobs:
 
           Write-Host 'ABUKHALED AI branding verified.'
           Write-Host 'Original application identity preserved.'
+          Write-Host 'Home-page cleanup verified.'
           Write-Host 'Startup readiness and dashboard smoke-test conditions verified.'
 
       - name: Build ABUKHALED AI for Windows
@@ -352,6 +389,7 @@ jobs:
             "GitHub run number: $env:GITHUB_RUN_NUMBER"
             "GitHub run ID: $env:GITHUB_RUN_ID"
             'Branding verification: PASSED'
+            'Home-page cleanup verification: PASSED'
             'Startup readiness verification: PASSED'
             'Packaged smoke test: PASSED'
           ) | Set-Content artifacts/ABUKHALED-BUILD-INFO.txt
