@@ -1,5 +1,4 @@
 
-#!/usr/bin/env node
 /**
  * ABUKHALED AI home-page cleanup for OmniRoute 3.8.53.
  * Removes sponsor/news banners while preserving essential dashboard components.
