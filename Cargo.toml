@@ -1,0 +1,16 @@
+[package]
+name = "alosh-storage-topology"
+version = "0.9.1"
+edition = "2021"
+license = "MIT"
+description = "Alosh Engineering storage topology, adaptive I/O scheduling, resumable executor, and transactional SQLite snapshot adapter"
+
+[dependencies]
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+
+[lib]
+name = "alosh_storage_topology"
+path = "src/lib.rs"
+
+[features]
+default = []
